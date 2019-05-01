@@ -1,0 +1,1526 @@
+---
+title: "GAMMs analyses Trombone - Tongan vs English (NZE) -> Plots"
+author:
+- Jalal Al-Tamimi (Newcastle University)
+- Donald Derrick (University of Canterbury)
+- Matthias Heyne (Boston University)
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '6'
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_depth: 6
+    toc_float:
+      collapsed: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '6'
+  html_document:
+    toc: yes
+    toc_depth: '6'
+---
+
+This notebook provides some plots for the article: Heyne, M., Derrick, D., and Al-Tamimi, J. (under review). "Native language influence on brass instrument performance: An application of generalized additive mixed models (GAMMs) to midsagittal ultrasound images of the tongue". Frontiers Research Topic: Models and Theories of Speech Production. Ed. Adamantios Gafos & Pascal van Lieshout.
+
+
+# Loading packages
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+load_packages = c("readr","knitr","ggplot2","mgcv","itsadug","parallel","dplyr","rlist","plotly")
+# dplyr, rlist, and plotly are required by the custom plotting functions
+for(pkg in load_packages){
+  eval(bquote(library(.(pkg))))
+  if (paste0("package:", pkg) %in% search()){
+    cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+  }else{
+    install.packages(pkg)
+    eval(bquote(library(.(pkg))))
+    if (paste0("package:", pkg) %in% search()){
+      cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+    }
+  }
+}
+rm(load_packages, pkg)
+
+# detect number of cores available for model calculations
+ncores = detectCores()
+cat(paste0("Number of cores available for model calculations set to ", ncores, "."))
+```
+
+## Loading custom plotting function
+
+## plotly_sig_diff_notes function (Matthias Heyne, 2019)
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# plot smooths with shading to indicate significant differences (Matthias Heyne, 2019)
+plotly_smooths_w_sig_diff <- function(model, condition, var1, var2, values, language, print=TRUE){
+  # specify path for saving plots
+  # plot_folder = "saved_plots"
+  # Sys.setenv(MAPBOX_TOKEN = 11122223333444)
+  # get intervals of significant differences by running plot_diff
+  # unfortunately setting plot=FALSE doesn't work as intervals of significant difference are not displayed!
+  # hardcoded condition
+  # output = capture.output(plot_diff(get(model), view=values, 
+  #                                   comp=list(tokenPooled.ord=c(var1, var2))))
+  # output = capture.output(plot_diff(get(model), view=values, comp=list(langNoteInt.ord=c(paste0("Tongan.", note, ".", intensity), paste0("NZE.", note, ".", intensity)))))
+  names_smooths=list()
+  if (condition=="tokenPooled.ord" && length(language)==1){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c(var1, var2))")))
+    names_smooths[1]=var1
+    names_smooths[2]=var2
+    plot_title = paste0("GAM smooths ", language, " ", var1, " vs ", var2)
+    # plot_filename = paste0(language, "_", var1, "_vs_", var2, "_from_", model)
+  }else if (condition=="langNoteInt.ord" && length(language)==2){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c('", language[1], ".", var1, ".", var2, 
+                                            "', '", language[2], ".", var1, ".", var2, "'))")))
+    names_smooths[1]=paste0(language[1], ".", var1, ".", var2)
+    names_smooths[2]=paste0(language[2], ".", var1, ".", var2)
+    plot_title = paste0("GAM smooths ", language[1], ".", var1, ".", var2, " vs ", language[2], ".", var1, ".", var2)
+    # plot_filename = paste0(language[1], ".", var1, ".", var2, "_vs_", language[2], ".", var1, ".", var2, "_from_", model)
+  }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c('", language, ".", var1[1], ".", var2, 
+                                            "', '", language, ".", var1[2], ".", var2, "'))")))
+    names_smooths[1]=paste0(language, ".", var1[1], ".", var2)
+    names_smooths[2]=paste0(language, ".", var1[2], ".", var2)
+    plot_title = paste0("GAM smooths ", language, ".", var1[1], ".", var2, " vs ", language, ".", var1[2], ".", var2)
+    # plot_filename = paste0(language, ".", var1[1], ".", var2, "_vs_", language, ".", var1[2], ".", var2, "_from_", model)
+  }
+  # output_comp = capture.output(cat(paste0("list(", condition, "=c(var1, var2))")))
+  output = capture.output(plot_diff(get(model), view=values, comp=eval(parse(text=output_comp))))
+  # no significant difference
+  if ((length(language)==1 && length(var1)==1 && length(output)==7) | (length(language)==2 && length(output)==6) | 
+    (length(language)==1 && length(var1)==2 && length(output)==6)){
+    if (length(var1)==1){
+      cat(paste0("Smooths for ", var1, " & ", var2, " are not significantly different.\n"))
+      dat1 = NA
+      assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    }else{
+      cat(paste0("Smooths for ", var1[1], " & ", var1[2], " in ", language, " are not significantly different.\n"))
+      dat1 = NA
+      assign(paste0("int_sig_diff_", var1[1], "_", var1[2], "_", var2, "_", language), dat1, envir = .GlobalEnv)
+    }
+    rm(dat1, output)
+    # run plot_smooth to grab data for polar plots
+    if (condition=="tokenPooled.ord" && length(language)==1){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "=var1)")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "=var2)")))
+    }else if (condition=="langNoteInt.ord" && length(language)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language[1], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[2], ".", var1, ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language[2], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[1], ".", var1, ".", var2, "')")))
+    }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[1], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[2], ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[2], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[1], ".", var2, "')")))
+    }
+    p1 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p1)), rm.ranef=TRUE)
+    p2 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p2)), rm.ranef=TRUE)
+    # # old - hardcoded
+    # p1 = plot_smooth(x=get(model), view=values, cond=list(tokenPooled.ord=var1, tokenPooled.ord=var2))
+    # p2 = plot_smooth(x=get(model), view=values, cond=list(tokenPooled.ord=var2, tokenPooled.ord=var1))
+    # set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+    maximum=max(p1$fv$fit, p2$fv$fit)+((max(p1$fv$ul, p2$fv$ul)-max(p1$fv$fit, p2$fv$fit))/2)
+    # plot in polar coordinates
+    p=plot_ly(type='scatterpolar', mode='lines') %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash",  width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+      layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                        angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+             title=paste0("GAM smooths ", language, " ", var1, " vs ", var2), 
+             legend=list(orientation="h", xanchor="center", x=0.5))
+    Sys.sleep(0)
+    print(p)
+  # there are differences...
+  }else{
+    # grab intervals of significant differences from output
+    if (length(language)==1 && length(var1)==1 && length(output)>=8){
+    # if (length(language)==1 && length(output)>=8){
+      sig_diff1 = c(as.double(unlist(strsplit(unlist(strsplit(output[8], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[8], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=7) | (length(language)==1 && length(var1)==2 && length(output)>=7)){
+    # }else if (length(language)==2 && length(output)>=7){
+      sig_diff1 = c(as.double(unlist(strsplit(unlist(strsplit(output[7], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[7], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=9){
+    # if (length(language)==1 && length(output)>=9){
+      sig_diff2 = c(as.double(unlist(strsplit(unlist(strsplit(output[9], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[9], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=8) | (length(language)==1 && length(var1)==2 && length(output)>=8)){
+    # }else if (length(language)==2 && length(output)>=8){
+      sig_diff2 = c(as.double(unlist(strsplit(unlist(strsplit(output[8], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[8], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=10){
+    # if (length(language)==1 && length(output)>=10){
+      sig_diff3 = c(as.double(unlist(strsplit(unlist(strsplit(output[10], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[10], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=9) | (length(language)==1 && length(var1)==2 && length(output)>=9)){
+    # }else if (length(language)==2 && length(output)>=9){
+      sig_diff3 = c(as.double(unlist(strsplit(unlist(strsplit(output[9], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[9], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=11){
+    # if (length(language)==1 && length(output)>=11){
+      sig_diff4 = c(as.double(unlist(strsplit(unlist(strsplit(output[11], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[11], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=10) | (length(language)==1 && length(var1)==2 && length(output)>=10)){
+    # }else if (length(language)==2 && length(output)>=10){
+      sig_diff4 = c(as.double(unlist(strsplit(unlist(strsplit(output[10], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[10], " "))[3]))
+    }
+
+    
+    # write intervals of significant difference to variable
+    if ((length(language)==1 && length(var1)==1 && length(output)>=11) | ((length(language)==2 && length(output)>=10)) | 
+        (length(language)==1 && length(var1)==2 && length(output)>=10)){
+    # if ((length(language)==1 && length(output)>=11) | (length(language)==2 && length(output)>=10)){
+      dat1 = c(sig_diff1, sig_diff2, sig_diff3, sig_diff4)
+    }else if ((length(language)==1 && length(var1)==1 && length(output)>=10) | ((length(language)==2 && length(output)>=9)) | 
+              (length(language)==1 && length(var1)==2 && length(output)>=9)){
+    # }else if ((length(language)==1 && length(output)>=10) | (length(language)==2 && length(output)>=9)){
+      dat1 = c(sig_diff1, sig_diff2, sig_diff3)
+    }else if ((length(language)==1 && length(var1)==1 && length(output)>=9) | ((length(language)==2 && length(output)>=8)) | 
+              (length(language)==1 && length(var1)==2 && length(output)>=8)){
+    # }else if ((length(language)==1 && length(output)>=9) | (length(language)==2 && length(output)>=8)){
+      dat1 = c(sig_diff1, sig_diff2)
+    }else{
+      dat1 = sig_diff1
+    }
+    # old
+    # assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    if (length(var1)==1){
+      assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    }else{
+      assign(paste0("int_sig_diff_", var1[1], "_", var1[2], "_", var2, "_", language), dat1, envir = .GlobalEnv)
+    }
+    rm(dat1, output)
+    # run plot_smooth to grab data for polar plots
+    if (condition=="tokenPooled.ord" && length(language)==1){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "=var1)")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "=var2)")))
+    }else if (condition=="langNoteInt.ord" && length(language)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language[1], ".", var1, ".", var2, 
+                                "', ", condition, "='", language[2], ".", var1, ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language[2], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[1], ".", var1, ".", var2, "')")))
+    }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[1], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[2], ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[2], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[1], ".", var2, "')")))
+    }
+    p1 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p1)), rm.ranef=TRUE)
+    p2 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p2)), rm.ranef=TRUE)
+    # set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+    maximum=max(p1$fv$fit, p2$fv$fit)+((max(p1$fv$ul, p2$fv$ul)-max(p1$fv$fit, p2$fv$fit))/2)
+    # plot in polar coordinates
+    if (exists("sig_diff4")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff3[1]*180/pi, sig_diff3[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff4[1]*180/pi, sig_diff4[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else if (exists("sig_diff3")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff3[1]*180/pi, sig_diff3[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else if (exists("sig_diff2")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else{
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }
+  }
+  # orca should work with plotly 4.9.0 after loading the orca module before stating R and RStudio
+  # orca(p, "test.pdf")
+}
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# load final model for H2 NZE
+NZE.gam.AR.Mod2 = readRDS("updated_models/NZE.gam.AR.Mod2.rds")
+```
+
+# Plot final model outputs: NZE.gam.AR.Mod2
+
+## Vowel "ɐː"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɐː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɐː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɐː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɐː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɐː", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ɐ"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɐ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɐ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɐ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɐ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɐ", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ɛ"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɛ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɛ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɛ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɛ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɛ", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ɵː"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɵː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɵː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɵː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɵː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɵː", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "e"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="e", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="e", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="e", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="e", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="e", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "iː"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="iː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="iː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="iː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="iː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="iː", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ʉː"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ʉː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ʉː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ʉː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ʉː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ʉː", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ʊ"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ʊ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ʊ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ʊ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ʊ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ʊ", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "oː"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="oː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="oː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="oː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="oː", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="oː", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ɒ"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɒ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɒ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɒ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɒ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɒ", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ɘ"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ɘ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ɘ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ɘ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ɘ", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ɘ", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ə"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ə", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ə", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ə", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ə", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ə", values="theta_uncut_z", language="NZE")
+```
+
+## Vowel "ə#"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="ə#", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="ə#", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="ə#", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="ə#", values="theta_uncut_z", language="NZE")
+plotly_smooths_w_sig_diff(model="NZE.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="ə#", values="theta_uncut_z", language="NZE")
+```
+
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# combine int_sig_diff... from workspace
+all_sig_diff_intervals = (list=ls(pattern="^int_sig_diff"))
+
+max_sig_diff_intervals = 0
+for (i in 1:length(all_sig_diff_intervals)){
+  if (length(get(all_sig_diff_intervals[i]))>max_sig_diff_intervals){
+    max_sig_diff_intervals = length(get(all_sig_diff_intervals[i]))
+  }
+}
+
+# set up data.frame to store information
+sig_diffs = array(NA, c(length(all_sig_diff_intervals), max_sig_diff_intervals))
+sig_diffs = data.frame(sig_diffs)
+if (max_sig_diff_intervals==8){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2",
+                          "low_int3","high_int3","low_int4","high_int4")
+}else if (max_sig_diff_intervals==6){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2","low_int3","high_int3")
+}else if (max_sig_diff_intervals==4){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2")
+}else{
+  colnames(sig_diffs) = c("low_int1","high_int1")
+}
+# create empty list for row names
+names = rep(list("NA"), length(all_sig_diff_intervals))
+
+# loop through variable and write information to data.frame
+for (i in 1:length(all_sig_diff_intervals)){
+  names[i] = paste0(unlist(strsplit(all_sig_diff_intervals[i], "_"))[4], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[5])
+  sig_diffs[i, 1] = get(all_sig_diff_intervals[i])[1]
+  sig_diffs[i, 2] = get(all_sig_diff_intervals[i])[2]
+  if (length(get(all_sig_diff_intervals[i]))>=4){
+    sig_diffs[i, 3] = get(all_sig_diff_intervals[i])[3]
+    sig_diffs[i, 4] = get(all_sig_diff_intervals[i])[4]
+  }
+  if (length(get(all_sig_diff_intervals[i]))>=6){
+    sig_diffs[i, 5] = get(all_sig_diff_intervals[i])[5]
+    sig_diffs[i, 6] = get(all_sig_diff_intervals[i])[6]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==8){
+    sig_diffs[i, 7] = get(all_sig_diff_intervals[i])[7]
+    sig_diffs[i, 8] = get(all_sig_diff_intervals[i])[8]
+  }
+}
+row.names(sig_diffs) = names
+rm(i)
+
+# inspect sig_diffs data.frame and move entries for conditions with only 
+# one significantly different interval to other edge, if applicable
+sig_diffs["Bb2_ɐ",5] = sig_diffs["Bb2_ɐ",1]
+sig_diffs["Bb2_ɐ",6] = sig_diffs["Bb2_ɐ",2]
+sig_diffs["Bb2_ɐ",1:2] = NA
+sig_diffs["Bb2_ɐː",5] = sig_diffs["Bb2_ɐː",1]
+sig_diffs["Bb2_ɐː",6] = sig_diffs["Bb2_ɐː",2]
+sig_diffs["Bb2_ɐː",1:2] = NA
+sig_diffs["Bb2_e",5] = sig_diffs["Bb2_e",3]
+sig_diffs["Bb2_e",6] = sig_diffs["Bb2_e",4]
+sig_diffs["Bb2_e",3:4] = NA
+sig_diffs["Bb2_ə#",5] = sig_diffs["Bb2_ə#",1]
+sig_diffs["Bb2_ə#",6] = sig_diffs["Bb2_ə#",2]
+sig_diffs["Bb2_ə#",1:2] = NA
+sig_diffs["Bb2_ɛ",5] = sig_diffs["Bb2_ɛ",1]
+sig_diffs["Bb2_ɛ",6] = sig_diffs["Bb2_ɛ",2]
+sig_diffs["Bb2_ɛ",1:2] = NA
+sig_diffs["Bb2_ɘ",5] = sig_diffs["Bb2_ɘ",1]
+sig_diffs["Bb2_ɘ",6] = sig_diffs["Bb2_ɘ",2]
+sig_diffs["Bb2_ɘ",1:2] = NA
+sig_diffs["Bb2_oː",5] = sig_diffs["Bb2_oː",3]
+sig_diffs["Bb2_oː",6] = sig_diffs["Bb2_oː",4]
+sig_diffs["Bb2_oː",3:4] = NA
+sig_diffs["Bb2_oː",3] = sig_diffs["Bb2_oː",1]
+sig_diffs["Bb2_oː",4] = sig_diffs["Bb2_oː",2]
+sig_diffs["Bb2_oː",1:2] = NA
+sig_diffs["Bb2_ɵː",5] = sig_diffs["Bb2_ɵː",3]
+sig_diffs["Bb2_ɵː",6] = sig_diffs["Bb2_ɵː",4]
+sig_diffs["Bb2_ɵː",3:4] = NA
+sig_diffs["Bb3_ɛ",5] = sig_diffs["Bb3_ɛ",3]
+sig_diffs["Bb3_ɛ",6] = sig_diffs["Bb3_ɛ",4]
+sig_diffs["Bb3_ɛ",3:4] = NA
+sig_diffs["Bb3_oː",5] = sig_diffs["Bb3_oː",3]
+sig_diffs["Bb3_oː",6] = sig_diffs["Bb3_oː",4]
+sig_diffs["Bb3_oː",3:4] = NA
+sig_diffs["D4_ɐ",5] = sig_diffs["D4_ɐ",3]
+sig_diffs["D4_ɐ",6] = sig_diffs["D4_ɐ",4]
+sig_diffs["D4_ɐ",3:4] = NA
+sig_diffs["D4_ɐː",5] = sig_diffs["D4_ɐː",3]
+sig_diffs["D4_ɐː",6] = sig_diffs["D4_ɐː",4]
+sig_diffs["D4_ɐː",3:4] = NA
+sig_diffs["D4_oː",5] = sig_diffs["D4_oː",3]
+sig_diffs["D4_oː",6] = sig_diffs["D4_oː",4]
+sig_diffs["D4_oː",3:4] = NA
+sig_diffs["F3_ɐ",5] = sig_diffs["F3_ɐ",1]
+sig_diffs["F3_ɐ",6] = sig_diffs["F3_ɐ",2]
+sig_diffs["F3_ɐ",1:2] = NA
+sig_diffs["F3_ɐː",5] = sig_diffs["F3_ɐː",1]
+sig_diffs["F3_ɐː",6] = sig_diffs["F3_ɐː",2]
+sig_diffs["F3_ɐː",1:2] = NA
+sig_diffs["F3_ə#",5] = sig_diffs["F3_ə#",1]
+sig_diffs["F3_ə#",6] = sig_diffs["F3_ə#",2]
+sig_diffs["F3_ə#",1:2] = NA
+sig_diffs["F3_ɛ",5] = sig_diffs["F3_ɛ",3]
+sig_diffs["F3_ɛ",6] = sig_diffs["F3_ɛ",4]
+sig_diffs["F3_ɛ",3:4] = NA
+sig_diffs["F3_ɘ",5] = sig_diffs["F3_ɘ",3]
+sig_diffs["F3_ɘ",6] = sig_diffs["F3_ɘ",4]
+sig_diffs["F3_ɘ",3:4] = NA
+sig_diffs["F3_oː",5] = sig_diffs["F3_oː",3]
+sig_diffs["F3_oː",6] = sig_diffs["F3_oː",4]
+sig_diffs["F3_oː",3:4] = NA
+sig_diffs["F3_ɵː",5] = sig_diffs["F3_ɵː",3]
+sig_diffs["F3_ɵː",6] = sig_diffs["F3_ɵː",4]
+sig_diffs["F3_ɵː",3:4] = NA
+sig_diffs["F4_ɐ",5] = sig_diffs["F4_ɐ",1]
+sig_diffs["F4_ɐ",6] = sig_diffs["F4_ɐ",2]
+sig_diffs["F4_ɐ",1:2] = NA
+sig_diffs["F4_ɐː",5] = sig_diffs["F4_ɐː",1]
+sig_diffs["F4_ɐː",6] = sig_diffs["F4_ɐː",2]
+sig_diffs["F4_ɐː",1:2] = NA
+sig_diffs["F4_ɛ",5] = sig_diffs["F4_ɛ",3]
+sig_diffs["F4_ɛ",6] = sig_diffs["F4_ɛ",4]
+sig_diffs["F4_ɛ",3:4] = NA
+sig_diffs["F4_ɘ",5] = sig_diffs["F4_ɘ",3]
+sig_diffs["F4_ɘ",6] = sig_diffs["F4_ɘ",4]
+sig_diffs["F4_ɘ",3:4] = NA
+sig_diffs["F4_oː",5] = sig_diffs["F4_oː",3]
+sig_diffs["F4_oː",6] = sig_diffs["F4_oː",4]
+sig_diffs["F4_oː",3:4] = NA
+
+# determine intervals where all smooths are different
+# to disregard NAs, use na.rm=TRUE
+sig_diffs[length(all_sig_diff_intervals)+1,1] = max(sig_diffs[,1])
+sig_diffs[length(all_sig_diff_intervals)+1,2] = min(sig_diffs[,2])
+sig_diffs[length(all_sig_diff_intervals)+1,3] = max(sig_diffs[,3])
+sig_diffs[length(all_sig_diff_intervals)+1,4] = min(sig_diffs[,4])
+sig_diffs[length(all_sig_diff_intervals)+1,5] = max(sig_diffs[,5])
+sig_diffs[length(all_sig_diff_intervals)+1,6] = min(sig_diffs[,6])
+# -> There are no intervals where all smooths are different!!!
+
+# update row names
+row.names(sig_diffs) = c(names, "overall")
+
+# write variable to .csv file
+write.csv(sig_diffs, file = "NZE.gam.AR.Mod2_intervals_of_significant_differences.csv")
+
+rm(list=ls(pattern="^int_sig_diff"))
+rm(list, all_sig_diff_intervals, sig_diffs, names, max_sig_diff_intervals)
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# load final model for H2 Tongan
+Tongan.gam.AR.Mod2 = readRDS("updated_models/Tongan.gam.AR.Mod2.rds")
+```
+
+# Plot final model outputs: Tongan.gam.AR.Mod2
+
+## Vowel "a"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="a", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="a", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="a", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="a", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="a", values="theta_uncut_z", language="Tongan")
+```
+
+## Vowel "e"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="e", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="e", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="e", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="e", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="e", values="theta_uncut_z", language="Tongan")
+```
+
+## Vowel "i"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="i", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="i", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="i", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="i", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="i", values="theta_uncut_z", language="Tongan")
+```
+
+## Vowel "u"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="u", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="u", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="u", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="u", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="u", values="theta_uncut_z", language="Tongan")
+```
+
+## Vowel "o"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb2", var2="o", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F3", var2="o", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="Bb3", var2="o", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="D4", var2="o", values="theta_uncut_z", language="Tongan")
+plotly_smooths_w_sig_diff(model="Tongan.gam.AR.Mod2", condition="tokenPooled.ord", 
+                var1="F4", var2="o", values="theta_uncut_z", language="Tongan")
+```
+
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# combine int_sig_diff... from workspace
+all_sig_diff_intervals = (list=ls(pattern="^int_sig_diff"))
+
+max_sig_diff_intervals = 0
+for (i in 1:length(all_sig_diff_intervals)){
+  if (length(get(all_sig_diff_intervals[i]))>max_sig_diff_intervals){
+    max_sig_diff_intervals = length(get(all_sig_diff_intervals[i]))
+  }
+}
+
+# set up data.frame to store information
+sig_diffs = array(NA, c(length(all_sig_diff_intervals), max_sig_diff_intervals))
+sig_diffs = data.frame(sig_diffs)
+if (max_sig_diff_intervals==8){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2",
+                          "low_int3","high_int3","low_int4","high_int4")
+}else if (max_sig_diff_intervals==6){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2","low_int3","high_int3")
+}else if (max_sig_diff_intervals==4){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2")
+}else{
+  colnames(sig_diffs) = c("low_int1","high_int1")
+}
+# create empty list for row names
+names = rep(list("NA"), length(all_sig_diff_intervals))
+
+# loop through variable and write information to data.frame
+for (i in 1:length(all_sig_diff_intervals)){
+  names[i] = paste0(unlist(strsplit(all_sig_diff_intervals[i], "_"))[4], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[5])
+  sig_diffs[i, 1] = get(all_sig_diff_intervals[i])[1]
+  sig_diffs[i, 2] = get(all_sig_diff_intervals[i])[2]
+  if (length(get(all_sig_diff_intervals[i]))>=4){
+    sig_diffs[i, 3] = get(all_sig_diff_intervals[i])[3]
+    sig_diffs[i, 4] = get(all_sig_diff_intervals[i])[4]
+  }
+  if (length(get(all_sig_diff_intervals[i]))>=6){
+    sig_diffs[i, 5] = get(all_sig_diff_intervals[i])[5]
+    sig_diffs[i, 6] = get(all_sig_diff_intervals[i])[6]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==8){
+    sig_diffs[i, 7] = get(all_sig_diff_intervals[i])[7]
+    sig_diffs[i, 8] = get(all_sig_diff_intervals[i])[8]
+  }
+}
+row.names(sig_diffs) = names
+rm(i)
+
+# inspect sig_diffs data.frame and move entries for conditions with only 
+# one significantly different interval to other edge, if applicable
+sig_diffs["Bb2_e",5] = sig_diffs["Bb2_e",3]
+sig_diffs["Bb2_e",6] = sig_diffs["Bb2_e",4]
+sig_diffs["Bb2_e",3:4] = NA
+sig_diffs["Bb2_e",3] = sig_diffs["Bb2_e",1]
+sig_diffs["Bb2_e",4] = sig_diffs["Bb2_e",2]
+sig_diffs["Bb2_e",1:2] = NA
+sig_diffs["Bb2_i",7] = sig_diffs["Bb2_i",5]
+sig_diffs["Bb2_i",8] = sig_diffs["Bb2_i",6]
+sig_diffs["Bb2_i",5:6] = NA
+sig_diffs["Bb2_i",5] = sig_diffs["Bb2_i",3]
+sig_diffs["Bb2_i",6] = sig_diffs["Bb2_i",4]
+sig_diffs["Bb2_i",3:4] = NA
+sig_diffs["Bb2_i",3] = sig_diffs["Bb2_i",1]
+sig_diffs["Bb2_i",4] = sig_diffs["Bb2_i",2]
+sig_diffs["Bb2_i",1:2] = NA
+sig_diffs["Bb2_o",7] = sig_diffs["Bb2_o",3]
+sig_diffs["Bb2_o",8] = sig_diffs["Bb2_o",4]
+sig_diffs["Bb2_o",3:4] = NA
+sig_diffs["Bb2_u",7] = sig_diffs["Bb2_u",1]
+sig_diffs["Bb2_u",8] = sig_diffs["Bb2_u",2]
+sig_diffs["Bb2_u",1:2] = NA
+sig_diffs["Bb3_e",5] = sig_diffs["Bb3_e",3]
+sig_diffs["Bb3_e",6] = sig_diffs["Bb3_e",4]
+sig_diffs["Bb3_e",3:4] = NA
+sig_diffs["Bb3_e",3] = sig_diffs["Bb3_e",1]
+sig_diffs["Bb3_e",4] = sig_diffs["Bb3_e",2]
+sig_diffs["Bb3_e",1:2] = NA
+sig_diffs["Bb3_i",5] = sig_diffs["Bb3_i",3]
+sig_diffs["Bb3_i",6] = sig_diffs["Bb3_i",4]
+sig_diffs["Bb3_i",3:4] = NA
+sig_diffs["Bb3_i",3] = sig_diffs["Bb3_i",1]
+sig_diffs["Bb3_i",4] = sig_diffs["Bb3_i",2]
+sig_diffs["Bb3_i",1:2] = NA
+sig_diffs["Bb3_o",7] = sig_diffs["Bb3_o",3]
+sig_diffs["Bb3_o",8] = sig_diffs["Bb3_o",4]
+sig_diffs["Bb3_o",3:4] = NA
+sig_diffs["Bb3_u",7] = sig_diffs["Bb3_u",1]
+sig_diffs["Bb3_u",8] = sig_diffs["Bb3_u",2]
+sig_diffs["Bb3_u",1:2] = NA
+sig_diffs["D4_e",3] = sig_diffs["D4_e",1]
+sig_diffs["D4_e",4] = sig_diffs["D4_e",2]
+sig_diffs["D4_e",1:2] = NA
+sig_diffs["D4_i",5] = sig_diffs["D4_i",3]
+sig_diffs["D4_i",6] = sig_diffs["D4_i",4]
+sig_diffs["D4_i",3:4] = NA
+sig_diffs["D4_i",3] = sig_diffs["D4_i",1]
+sig_diffs["D4_i",4] = sig_diffs["D4_i",2]
+sig_diffs["D4_i",1:2] = NA
+sig_diffs["D4_o",7] = sig_diffs["D4_o",1]
+sig_diffs["D4_o",8] = sig_diffs["D4_o",2]
+sig_diffs["D4_o",1:2] = NA
+sig_diffs["D4_u",7] = sig_diffs["D4_u",1]
+sig_diffs["D4_u",8] = sig_diffs["D4_u",2]
+sig_diffs["D4_u",1:2] = NA
+sig_diffs["F3_e",5] = sig_diffs["F3_e",3]
+sig_diffs["F3_e",6] = sig_diffs["F3_e",4]
+sig_diffs["F3_e",3:4] = NA
+sig_diffs["F3_e",3] = sig_diffs["F3_e",1]
+sig_diffs["F3_e",4] = sig_diffs["F3_e",2]
+sig_diffs["F3_e",1:2] = NA
+sig_diffs["F3_o",7] = sig_diffs["F3_o",1]
+sig_diffs["F3_o",8] = sig_diffs["F3_o",2]
+sig_diffs["F3_o",1:2] = NA
+sig_diffs["F3_u",7] = sig_diffs["F3_u",1]
+sig_diffs["F3_u",8] = sig_diffs["F3_u",2]
+sig_diffs["F3_u",1:2] = NA
+sig_diffs["F4_i",5] = sig_diffs["F4_i",3]
+sig_diffs["F4_i",6] = sig_diffs["F4_i",4]
+sig_diffs["F4_i",3:4] = NA
+sig_diffs["F4_i",3] = sig_diffs["F4_i",1]
+sig_diffs["F4_i",4] = sig_diffs["F4_i",2]
+sig_diffs["F4_i",1:2] = NA
+sig_diffs["F4_o",7] = sig_diffs["F4_o",3]
+sig_diffs["F4_o",8] = sig_diffs["F4_o",4]
+sig_diffs["F4_o",3:4] = NA
+sig_diffs["F4_u",7] = sig_diffs["F4_u",1]
+sig_diffs["F4_u",8] = sig_diffs["F4_u",2]
+sig_diffs["F4_u",1:2] = NA
+
+# determine intervals where all smooths are different
+# to disregard NAs, use na.rm=TRUE
+sig_diffs[length(all_sig_diff_intervals)+1,1] = max(sig_diffs[,1])
+sig_diffs[length(all_sig_diff_intervals)+1,2] = min(sig_diffs[,2])
+sig_diffs[length(all_sig_diff_intervals)+1,3] = max(sig_diffs[,3])
+sig_diffs[length(all_sig_diff_intervals)+1,4] = min(sig_diffs[,4])
+sig_diffs[length(all_sig_diff_intervals)+1,5] = max(sig_diffs[,5])
+sig_diffs[length(all_sig_diff_intervals)+1,6] = min(sig_diffs[,6])
+# -> There are no intervals where all smooths are different!!!
+
+# update row names
+row.names(sig_diffs) = c(names, "overall")
+
+# write variable to .csv file
+write.csv(sig_diffs, file = "Tongan.gam.AR.Mod2_intervals_of_significant_differences.csv")
+
+rm(list=ls(pattern="^int_sig_diff"))
+rm(list, all_sig_diff_intervals, sig_diffs, names, max_sig_diff_intervals)
+```
+
+
+# Plot all vowels together
+
+## NZE
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# define colors from PhD thesis
+RED0 = (rgb(213,13,11, 255, maxColorValue=255))
+BROWN0 = (rgb(123,73,55,255, maxColorValue=255))
+# BLUE0 = (rgb(0,98,172,255, maxColorValue=255))
+PURPLE0 = (rgb(143,72,183,255, maxColorValue=255))
+GRAY0 = (rgb(108,108,108,255, maxColorValue=255))
+GREEN0 = (rgb(0,151,55,255, maxColorValue=255))
+ORANGE0 = (rgb(255,123,0,255, maxColorValue=255))
+PINK0 = (rgb(224,130,180,255, maxColorValue=255))
+TEAL0 = (rgb(0,175,195,255, maxColorValue=255))
+GOLD0 = (rgb(172,181,0,255, maxColorValue=255))
+# GOLD3 = (rgb(224,223,157,255, maxColorValue=255))
+# BLUE3 = (rgb(187,210,237,255, maxColorValue=255))
+# old color vector col=c("black", "black", GOLD0, GREEN0, ORANGE0, RED0, GRAY0,BROWN0, BLUE0, GOLD0, PURPLE0, PINK0, TEAL0)
+
+light_blue=rgb(0,117,220,255,maxColorValue=255) #col2
+black=rgb(25,25,25,255,maxColorValue=255) #col5
+pink=rgb(194,0,136,255,maxColorValue=255) #col13
+dark_blue=rgb(0,51,128,255,maxColorValue=255) #col14
+dark_red=rgb(153,0,0,255,maxColorValue=255)
+# discarded
+# bright_torquoise=rgb(94,241,242,255,maxColorValue=255) #col19
+# light_purple=rgb(116,10,255,255,maxColorValue=255)
+
+# correct order
+colors = c(ORANGE0, dark_blue, GREEN0, light_blue, PINK0, GOLD0, BROWN0, TEAL0, GRAY0, dark_red,
+           RED0, PURPLE0, pink)
+
+# colorblind safe
+# colors = brewer.pal(11,"RdYlBu")
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="iː"), rm.ranef=TRUE)
+p2=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="e"), rm.ranef=TRUE)
+p3=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ʉː"), rm.ranef=TRUE)
+p4=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɛ"), rm.ranef=TRUE)
+p5=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɵː"), rm.ranef=TRUE)
+p6=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɘ"), rm.ranef=TRUE)
+p7=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə"), rm.ranef=TRUE)
+p8=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ʊ"), rm.ranef=TRUE)
+p9=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə#"), rm.ranef=TRUE)
+p10=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɐ"), rm.ranef=TRUE)
+p11=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɐː"), rm.ranef=TRUE)
+p12=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɒ"), rm.ranef=TRUE)
+p13=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="oː"), rm.ranef=TRUE)
+
+smooth_names=c("FLEECE /iː/","DRESS /e/","GOOSE /ʉː/","TRAP /ɛ/","NURSE /ɵː/","KIT /ɘ/",
+               "non-final schwa /ə/","FOOT /ʊ/","final schwa /ə#/","STRUT /ɐ/","START /ɐː/",
+               "LOT /ɒ/","THOUGHT /oː/")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul, p6$fv$ul, p7$fv$ul, p8$fv$ul, p9$fv$ul, p10$fv$ul, p11$fv$ul, p12$fv$ul, p13$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit, p11$fv$fit, p12$fv$fit, p13$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+rm(max_ul, max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot1=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], dash="dash", width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),
+            name=smooth_names[2]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5),
+            name=smooth_names[3]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], dash="dash", width=2.5), name=smooth_names[4]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], dash="dash", width=2.5), name=smooth_names[6]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ul, line=list(color=colors[6], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ll, line=list(color=colors[6], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], width=2.5),
+            name=smooth_names[7]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ul, line=list(color=colors[7], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ll, line=list(color=colors[7], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dash", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ul, line=list(color=colors[8], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ll, line=list(color=colors[8], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], width=2.5),
+            name=smooth_names[9]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ul, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ll, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ul, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ll, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p11$fv$theta_uncut_z*180/pi, r=p11$fv$fit, line=list(color=colors[11], width=2.5),
+            name=smooth_names[11]) %>%
+  add_trace(theta=p11$fv$theta_uncut_z*180/pi, r=p11$fv$ul, line=list(color=colors[11], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p11$fv$theta_uncut_z*180/pi, r=p11$fv$ll, line=list(color=colors[11], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p12$fv$theta_uncut_z*180/pi, r=p12$fv$fit, line=list(color=colors[12], dash="dash", width=2.5), name=smooth_names[12]) %>%
+  add_trace(theta=p12$fv$theta_uncut_z*180/pi, r=p12$fv$ul, line=list(color=colors[12], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p12$fv$theta_uncut_z*180/pi, r=p12$fv$ll, line=list(color=colors[12], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p13$fv$theta_uncut_z*180/pi, r=p13$fv$fit, line=list(color=colors[13], width=2.5),
+            name=smooth_names[13]) %>%
+  add_trace(theta=p13$fv$theta_uncut_z*180/pi, r=p13$fv$ul, line=list(color=colors[13], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p13$fv$theta_uncut_z*180/pi, r=p13$fv$ll, line=list(color=colors[13], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="All vowels produced by NZE speakers")
+plot1
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit, p11$fv$fit, p12$fv$fit, p13$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], dash="dash", width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),
+            name=smooth_names[2]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5),
+            name=smooth_names[3]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], dash="dash", width=2.5), name=smooth_names[4]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], dash="dash", width=2.5), name=smooth_names[6]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], width=2.5),
+            name=smooth_names[7]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dash", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], width=2.5),
+            name=smooth_names[9]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  add_trace(theta=p11$fv$theta_uncut_z*180/pi, r=p11$fv$fit, line=list(color=colors[11], width=2.5),
+            name=smooth_names[11]) %>%
+  add_trace(theta=p12$fv$theta_uncut_z*180/pi, r=p12$fv$fit, line=list(color=colors[12], dash="dash", width=2.5), name=smooth_names[12]) %>%
+  add_trace(theta=p13$fv$theta_uncut_z*180/pi, r=p13$fv$fit, line=list(color=colors[13], width=2.5),
+            name=smooth_names[13]) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="All vowels produced by NZE speakers")
+plot2
+
+rm(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13)
+```
+
+
+## NZE -> add notes
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# correct order
+colors = c(ORANGE0, dark_blue, GREEN0, light_blue, PINK0, GOLD0, BROWN0, TEAL0, GRAY0, dark_red,
+           RED0, PURPLE0, pink, black, black, black, black, black)
+
+# colorblind safe
+# colors = brewer.pal(11,"RdYlBu")
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="iː"), rm.ranef=TRUE)
+p2=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="e"), rm.ranef=TRUE)
+p3=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ʉː"), rm.ranef=TRUE)
+p4=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɛ"), rm.ranef=TRUE)
+p5=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɵː"), rm.ranef=TRUE)
+p6=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɘ"), rm.ranef=TRUE)
+p7=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə"), rm.ranef=TRUE)
+p8=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ʊ"), rm.ranef=TRUE)
+p9=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə#"), rm.ranef=TRUE)
+p10=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɐ"), rm.ranef=TRUE)
+p11=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɐː"), rm.ranef=TRUE)
+p12=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɒ"), rm.ranef=TRUE)
+p13=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="oː"), rm.ranef=TRUE)
+
+# add notes
+p14=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F4"), rm.ranef=TRUE)
+p15=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="D4"), rm.ranef=TRUE)
+p16=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb3"), rm.ranef=TRUE)
+p17=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F3"), rm.ranef=TRUE)
+p18=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb2"), rm.ranef=TRUE)
+
+# smooth_names=c("FLEECE /iː/","DRESS /e/","GOOSE /ʉː/","TRAP /ɛ/","NURSE /ɵː/","KIT /ɘ/",
+#                "non-final schwa /ə/","FOOT /ʊ/","final schwa /ə#/","STRUT /ɐ/","START /ɐː/",
+#                "LOT /ɒ/","THOUGHT /oː/","Bb2","F3","Bb3","D4","F4")
+# updated order
+smooth_names=c("FLEECE /iː/","DRESS /e/","GOOSE /ʉː/","TRAP /ɛ/","NURSE /ɵː/","KIT /ɘ/",
+               "non-final schwa /ə/","FOOT /ʊ/","final schwa /ə#/","STRUT /ɐ/","START /ɐː/",
+               "LOT /ɒ/","THOUGHT /oː/","F4","D4","Bb3","F3","Bb2")
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit, p11$fv$fit, p12$fv$fit, p13$fv$fit, p14$fv$fit, p15$fv$fit, p16$fv$fit, p17$fv$fit, p18$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+p=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], dash="dash", width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),
+            name=smooth_names[2]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5),
+            name=smooth_names[3]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], dash="dash", width=2.5), name=smooth_names[4]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], dash="dash", width=2.5), name=smooth_names[6]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], width=2.5),
+            name=smooth_names[7]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dash", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], width=2.5),
+            name=smooth_names[9]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  add_trace(theta=p11$fv$theta_uncut_z*180/pi, r=p11$fv$fit, line=list(color=colors[11], width=2.5),
+            name=smooth_names[11]) %>%
+  add_trace(theta=p12$fv$theta_uncut_z*180/pi, r=p12$fv$fit, line=list(color=colors[12], dash="dash", width=2.5), name=smooth_names[12]) %>%
+  add_trace(theta=p13$fv$theta_uncut_z*180/pi, r=p13$fv$fit, line=list(color=colors[13], width=2.5),
+            name=smooth_names[13]) %>%
+  # updated order
+  add_trace(theta=p14$fv$theta_uncut_z*180/pi, r=p14$fv$fit, line=list(color=colors[14], width=1),
+            name=smooth_names[14]) %>%
+  add_trace(theta=p15$fv$theta_uncut_z*180/pi, r=p15$fv$fit, line=list(color=colors[15], dash="dashdot", width=2.5), name=smooth_names[15]) %>%
+  add_trace(theta=p16$fv$theta_uncut_z*180/pi, r=p16$fv$fit, line=list(color=colors[16], dash="dot", width=2.5), name=smooth_names[16]) %>%
+  add_trace(theta=p17$fv$theta_uncut_z*180/pi, r=p17$fv$fit, line=list(color=colors[17], dash="dash", width=2.5), name=smooth_names[17]) %>%
+  add_trace(theta=p18$fv$theta_uncut_z*180/pi, r=p18$fv$fit, line=list(color=colors[18], width=2.5),
+            name=smooth_names[18]) %>%
+  # add_trace(theta=p14$fv$theta_uncut_z*180/pi, r=p14$fv$fit, line=list(color=colors[14], width=2.5),
+  #           name=smooth_names[14]) %>%
+  # add_trace(theta=p15$fv$theta_uncut_z*180/pi, r=p15$fv$fit, line=list(color=colors[15], dash="dash", width=2.5),
+  #           name=smooth_names[15]) %>%
+  # add_trace(theta=p16$fv$theta_uncut_z*180/pi, r=p16$fv$fit, line=list(color=colors[16], dash="dot", width=2.5),
+  #           name=smooth_names[16]) %>%
+  # add_trace(theta=p17$fv$theta_uncut_z*180/pi, r=p17$fv$fit, line=list(color=colors[17], dash="dashdot", width=2.5),
+  #           name=smooth_names[17]) %>%
+  # add_trace(theta=p18$fv$theta_uncut_z*180/pi, r=p18$fv$fit, line=list(color=colors[18], width=1),
+  #           name=smooth_names[18]) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="All vowels produced by NZE speakers")
+p
+
+rm(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18)
+```
+
+
+## Tongan
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# use colors from PhD thesis (loaded above)
+colors = c(ORANGE0, dark_blue, RED0, pink, GREEN0)
+
+# colorblind safe
+# colors = brewer.pal(11,"RdYlBu")[c(1,2,4,9,11)]
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="i"), rm.ranef=TRUE)
+p2=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="e"), rm.ranef=TRUE)
+p3=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="a"), rm.ranef=TRUE)
+p4=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="o"), rm.ranef=TRUE)
+p5=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="u"), rm.ranef=TRUE)
+smooth_names=c("/i/","/e/","/a/","/o/","/u/")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+rm(max_ul, max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot1=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5),
+            name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), 
+            name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), 
+            name=smooth_names[3]) %>% 
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), 
+            name=smooth_names[4]) %>% 
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), 
+            name=smooth_names[5]) %>% 
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All vowels produced by Tongan speakers")
+plot1
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5),
+            name=smooth_names[1]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), 
+            name=smooth_names[2]) %>% 
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), 
+            name=smooth_names[3]) %>% 
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), 
+            name=smooth_names[4]) %>% 
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), 
+            name=smooth_names[5]) %>% 
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All vowels produced by Tongan speakers")
+plot2
+
+rm(p1,p2,p3,p4,p5)
+```
+
+
+## Tongan -> add notes
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# use colors from PhD thesis (loaded above)
+colors = c(ORANGE0, dark_blue, RED0, pink, GREEN0, black, black, black, black, black)
+
+# colorblind safe
+# colors = brewer.pal(11,"RdYlBu")[c(1,2,4,9,11)]
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="i"), rm.ranef=TRUE)
+p2=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="e"), rm.ranef=TRUE)
+p3=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="a"), rm.ranef=TRUE)
+p4=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="o"), rm.ranef=TRUE)
+p5=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="u"), rm.ranef=TRUE)
+
+# add notes
+p6=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F4"), rm.ranef=TRUE)
+p7=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="D4"), rm.ranef=TRUE)
+p8=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb3"), rm.ranef=TRUE)
+p9=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F3"), rm.ranef=TRUE)
+p10=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb2"), rm.ranef=TRUE)
+
+smooth_names=c("/i/","/e/","/a/","/o/","/u/","F4","D4","Bb3","F3","Bb2")
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates without confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5),
+            name=smooth_names[1]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), 
+            name=smooth_names[2]) %>% 
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), 
+            name=smooth_names[3]) %>% 
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), 
+            name=smooth_names[4]) %>% 
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), 
+            name=smooth_names[5]) %>%
+  # updated order
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=1), 
+            name=smooth_names[6]) %>% 
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dashdot", width=2.5), name=smooth_names[7]) %>% 
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>% 
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dash", width=2.5), name=smooth_names[9]) %>% 
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5), 
+            name=smooth_names[10]) %>% 
+  # add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=2.5), 
+  #           name=smooth_names[6]) %>% 
+  # add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dash", width=2.5), name=smooth_names[7]) %>% 
+  # add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>% 
+  # add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dashdot", width=2.5), 
+  #           name=smooth_names[9]) %>% 
+  # add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=1), 
+  #           name=smooth_names[10]) %>% 
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All vowels produced by Tongan speakers")
+plot2
+
+rm(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10)
+```
+
+
+## plot vowels closest to playing contours from both languages
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors = c(BROWN0, GRAY0, PURPLE0, pink, GREEN0)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə"), rm.ranef=TRUE)
+p2=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə#"), rm.ranef=TRUE)
+p3=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɒ"), rm.ranef=TRUE)
+p4=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="o"), rm.ranef=TRUE)
+p5=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="u"), rm.ranef=TRUE)
+
+smooth_names=c("non-final schwa /ə/ NZE","final schwa /ə#/ NZE","LOT /ɒ/ NZE","/o/ Tongan", "/u/ Tongan")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+rm(max_ul, max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot1=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], dash="dash", width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5),
+            name=smooth_names[4]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position")
+plot1
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5, dash="dash"), name=smooth_names[3]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position")
+plot2
+
+rm(p1,p2,p3)
+```
+
+
+## plot vowels closest to playing contours from both languages -> with NZE notes!
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors = c(BROWN0, GRAY0, PURPLE0, pink, GREEN0, black, black, black, black, black)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə"), rm.ranef=TRUE)
+p2=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə#"), rm.ranef=TRUE)
+p3=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɒ"), rm.ranef=TRUE)
+p4=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="o"), rm.ranef=TRUE)
+p5=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="u"), rm.ranef=TRUE)
+
+# NZE notes
+p6=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F4"), rm.ranef=TRUE)
+p7=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="D4"), rm.ranef=TRUE)
+p8=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb3"), rm.ranef=TRUE)
+p9=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F3"), rm.ranef=TRUE)
+p10=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb2"), rm.ranef=TRUE)
+
+smooth_names=c("non-final schwa /ə/ NZE","final schwa /ə#/ NZE","LOT /ɒ/ NZE","/o/ Tongan","/u/ Tongan","F4 NZE","D4 NZE","Bb3 NZE","F3 NZE","Bb2 NZE")
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot1=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], dash="dash", width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5),
+            name=smooth_names[4]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=1),
+            name=smooth_names[6]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ul, line=list(color=colors[6], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ll, line=list(color=colors[6], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dashdot", width=2.5), name=smooth_names[7]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ul, line=list(color=colors[7], dash="dashdot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ll, line=list(color=colors[7], dash="dashdot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ul, line=list(color=colors[8], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ll, line=list(color=colors[8], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dash", width=2.5), name=smooth_names[9]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ul, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ll, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ul, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ll, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position with NZE notes")
+plot1
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates without confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], dash="dash", width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=1), name=smooth_names[6]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dashdot", width=2.5), name=smooth_names[7]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dash", width=2.5), name=smooth_names[9]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position with NZE notes")
+plot2
+
+rm(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10)
+```
+
+
+## plot vowels closest to playing contours from both languages -> with Tongan notes!
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors = c(BROWN0, GRAY0, PURPLE0, pink, GREEN0, black, black, black, black, black)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə"), rm.ranef=TRUE)
+p2=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ə#"), rm.ranef=TRUE)
+p3=plot_smooth(x=NZE.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="ɒ"), rm.ranef=TRUE)
+p4=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="o"), rm.ranef=TRUE)
+p5=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="u"), rm.ranef=TRUE)
+
+# Tongan notes
+p6=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F4"), rm.ranef=TRUE)
+p7=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="D4"), rm.ranef=TRUE)
+p8=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb3"), rm.ranef=TRUE)
+p9=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="F3"), rm.ranef=TRUE)
+p10=plot_smooth(x=Tongan.gam.AR.Mod2, view="theta_uncut_z", cond=list(tokenPooled.ord="Bb2"), rm.ranef=TRUE)
+
+smooth_names=c("non-final schwa /ə/ NZE","final schwa /ə#/ NZE","LOT /ɒ/ NZE","/o/ Tongan","/u/ Tongan","F4 Tongan","D4 Tongan","Bb3 Tongan","F3 Tongan","Bb2 Tongan")
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates with confidence bounds
+plot1=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], dash="dash", width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dash", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5),
+            name=smooth_names[4]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5),
+            name=smooth_names[5]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=1),
+            name=smooth_names[6]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ul, line=list(color=colors[6], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$ll, line=list(color=colors[6], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dashdot", width=2.5), name=smooth_names[7]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ul, line=list(color=colors[7], dash="dashdot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$ll, line=list(color=colors[7], dash="dashdot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ul, line=list(color=colors[8], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$ll, line=list(color=colors[8], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dash", width=2.5), name=smooth_names[9]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ul, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$ll, line=list(color=colors[9], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ul, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$ll, line=list(color=colors[10], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position with Tongan notes")
+plot1
+
+# set Rho max to the max of the fit + 5
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit, p6$fv$fit, p7$fv$fit, p8$fv$fit, p9$fv$fit, p10$fv$fit)
+maximum=max_fit+5
+rm(max_fit)
+
+# plot in polar coordinates without confidence bounds
+plot2=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5), name=smooth_names[2]) %>%
+  add_trace(theta=p3$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], dash="dash", width=2.5), name=smooth_names[3]) %>%
+  add_trace(theta=p4$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>%
+  add_trace(theta=p5$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>%
+  add_trace(theta=p6$fv$theta_uncut_z*180/pi, r=p6$fv$fit, line=list(color=colors[6], width=1), name=smooth_names[6]) %>%
+  add_trace(theta=p7$fv$theta_uncut_z*180/pi, r=p7$fv$fit, line=list(color=colors[7], dash="dashdot", width=2.5), name=smooth_names[7]) %>%
+  add_trace(theta=p8$fv$theta_uncut_z*180/pi, r=p8$fv$fit, line=list(color=colors[8], dash="dot", width=2.5), name=smooth_names[8]) %>%
+  add_trace(theta=p9$fv$theta_uncut_z*180/pi, r=p9$fv$fit, line=list(color=colors[9], dash="dash", width=2.5), name=smooth_names[9]) %>%
+  add_trace(theta=p10$fv$theta_uncut_z*180/pi, r=p10$fv$fit, line=list(color=colors[10], width=2.5),
+            name=smooth_names[10]) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)),
+         title="Tongan & NZE vowels closest to playing position with Tongan notes")
+plot2
+
+rm(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10)
+```
+

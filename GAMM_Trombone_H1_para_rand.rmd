@@ -1,0 +1,673 @@
+---
+title: "GAMMs analyses Trombone - Notes vs. vowels (NZE and Tongan)"
+author:
+  - Jalal Al-Tamimi (Newcastle University)
+  - Donald Derrick (University of Canterbury)
+  - Matthias Heyne (Boston University)
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_depth: 6
+    toc_float:
+      collapsed: yes
+  html_document:
+    toc: yes
+    toc_depth: '6'
+---
+
+This notebook provides additional plots to H1 and H2 of the full analysis of the article: Heyne, M., Derrick, D., and Al-Tamimi, J. (under review). "Native language influence on brass instrument performance: An application of generalized additive mixed models (GAMMs) to midsagittal ultrasound images of the tongue". Frontiers Research Topic: Models and Theories of Speech Production. Ed. Adamantios Gafos & Pascal van Lieshout.
+
+This provides various plots for the parametric terms and for inspecting random effects
+
+
+# Loading packages & custom plotting function
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+load_packages = c("mgcv","itsadug")
+# dplyr, rlist, and plotly are required by the custom plotting functions
+for(pkg in load_packages){
+  eval(bquote(library(.(pkg))))
+  if (paste0("package:", pkg) %in% search()){
+    cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+  }else{
+    install.packages(pkg)
+    eval(bquote(library(.(pkg))))
+    if (paste0("package:", pkg) %in% search()){
+      cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+    }
+  }
+}
+rm(load_packages, pkg)
+
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# specify directory to save models and summaries
+output_dir = "updated_models"
+```
+
+# Description
+
+These plots look at the parametric terms and at the random effects. 
+
+# Uploading latest model
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+Notes.gam.AR.Mod2 = readRDS(paste0(output_dir,"/Notes.gam.AR.Mod2.rds"))
+
+```
+
+# Plotting parametric terms
+
+Parametric terms are our fixed effects and we use these to look at variance in the data (with standard error) and position of the particular note (and intensity) in both languages. It summarises the variation observed. We look at the distribution of notes across the two languages. The x axis now has the Rho (height) values: the lower the value the lower the overall tongue shape is, and vice-versa.
+
+We observe overall that Tongan has a higher tongue position (overall) compared to NZE. Notes are different as well in that (overall) high notes show slightly higher tongue position and less variability; low notes show slightly lower tongue position and more variability
+
+
+## Bb2
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb2.piano', 'Tongan.Bb2.piano')),
+                cond=list(noteIntenInt='Bb2.piano'), rm.ranef=TRUE,
+                main="")
+```
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb2.mezzopiano', 'Tongan.Bb2.mezzopiano')),
+                cond=list(noteIntenInt='Bb2.mezzopiano'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb2.mezzoforte', 'Tongan.Bb2.mezzoforte')),
+                cond=list(noteIntenInt='Bb2.mezzoforte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb2.forte', 'Tongan.Bb2.forte')),
+                cond=list(noteIntenInt='Bb2.forte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+
+## F3
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F3.piano', 'Tongan.F3.piano')),
+                cond=list(noteIntenInt='F3.piano'), rm.ranef=TRUE,
+                main="")
+```
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F3.mezzopiano', 'Tongan.F3.mezzopiano')),
+                cond=list(noteIntenInt='F3.mezzopiano'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F3.mezzoforte', 'Tongan.F3.mezzoforte')),
+                cond=list(noteIntenInt='F3.mezzoforte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F3.forte', 'Tongan.F3.forte')),
+                cond=list(noteIntenInt='F3.forte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+## Bb3
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb3.piano', 'Tongan.Bb3.piano')),
+                cond=list(noteIntenInt='Bb3.piano'), rm.ranef=TRUE,
+                main="")
+```
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb3.mezzopiano', 'Tongan.Bb3.mezzopiano')),
+                cond=list(noteIntenInt='Bb3.mezzopiano'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb3.mezzoforte', 'Tongan.Bb3.mezzoforte')),
+                cond=list(noteIntenInt='Bb3.mezzoforte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.Bb3.forte', 'Tongan.Bb3.forte')),
+                cond=list(noteIntenInt='Bb3.forte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+
+## D4
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.D4.piano', 'Tongan.D4.piano')),
+                cond=list(noteIntenInt='D4.piano'), rm.ranef=TRUE,
+                main="")
+```
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.D4.mezzopiano', 'Tongan.D4.mezzopiano')),
+                cond=list(noteIntenInt='D4.mezzopiano'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.D4.mezzoforte', 'Tongan.D4.mezzoforte')),
+                cond=list(noteIntenInt='D4.mezzoforte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.D4.forte', 'Tongan.D4.forte')),
+                cond=list(noteIntenInt='D4.forte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+## F4
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F4.piano', 'Tongan.F4.piano')),
+                cond=list(noteIntenInt='F4.piano'), rm.ranef=TRUE,
+                main="")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F4.mezzoforte', 'Tongan.F4.mezzoforte')),
+                cond=list(noteIntenInt='F4.mezzoforte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,1))
+plot_parametric(Notes.gam.AR.Mod2,  xlim=c(190,280),
+                pred=list(langNoteInt.ord=c('NZE.F4.forte', 'Tongan.F4.forte')),
+                cond=list(noteIntenInt='F4.forte'), rm.ranef=TRUE,
+                                main="")
+```
+
+
+
+# Inspecting random effects
+
+Within random effects, we look at how variable our speakers are. Recall that this variability is taken into account in our model as all coefficients are adjusted to account for this variation. We look at the spread of variation in the data. Overall, we observe that our Tongan speakers display most of the variation compared to NZE speakers. This seems to match the predictions for H1b as well.
+
+
+## Bb2
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=40, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb2 piano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=40, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb2 piano - Tongan")
+```
+
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=45, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb2 mezzopiano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=45, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb2 mezzopiano - Tongan")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=50, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb2 mezzoforte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=50, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb2 mezzoforte - Tongan")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=55, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb2 forte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=55, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb2 forte - Tongan")
+```
+
+
+## F3
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=41, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F3 piano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=41, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F3 piano - Tongan")
+```
+
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=46, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F3 mezzopiano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=46, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F3 mezzopiano - Tongan")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=51, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F3 mezzoforte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=51, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F3 mezzoforte - Tongan")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=56, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F3 forte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=56, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F3 forte - Tongan")
+```
+
+
+## Bb3
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=42, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb3 piano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=42, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb3 piano - Tongan")
+```
+
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=47, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb3 mezzopiano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=47, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb3 mezzopiano - Tongan")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=52, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb3 mezzoforte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=52, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb3 mezzoforte - Tongan")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=57, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="Bb3 forte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=57, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="Bb3 forte - Tongan")
+```
+
+
+## D4
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=43, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="D4 piano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=43, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="D4 piano - Tongan")
+```
+
+
+
+### Mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=48, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="D4 mezzopiano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=48, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="D4 mezzopiano - Tongan")
+```
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=53, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="D4 mezzoforte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=53, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="D4 mezzoforte - Tongan")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=58, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="D4 forte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=58, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="D4 forte - Tongan")
+```
+
+
+## F4
+
+### Piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=44, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F4 piano - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=44, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F4 piano - Tongan")
+```
+
+
+
+### Mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=54, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F4 mezzoforte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=54, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F4 mezzoforte - Tongan")
+```
+
+
+### Forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(1,2))
+inspect_random(Notes.gam.AR.Mod2, select=59, ylim=c(-60,60), 
+               cond=list(subject=c('S1','S3','S5',
+                                   'S12', 'S24', 'S25',
+                                   'S26', 'S27',  'S29',
+                                   'S30')), col=1, xpd=TRUE,
+               main="F4 forte - NZE")
+inspect_random(Notes.gam.AR.Mod2, select=59, ylim=c(-60,60),
+               cond=list(subject=c('S4','S14','S15',
+                                   'S16', 'S17', 'S18',
+                                   'S19', 'S20',  'S21',
+                                   'S22')), col=2, xpd=TRUE, 
+               main="F4 forte - Tongan")
+```
+
+
+
+

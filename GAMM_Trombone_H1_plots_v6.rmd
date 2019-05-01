@@ -1,0 +1,1501 @@
+---
+title: "GAMMs analyses Trombone - Tongan vs English (NZE) -> Plots"
+author:
+- Jalal Al-Tamimi (Newcastle University)
+- Donald Derrick (University of Canterbury)
+- Matthias Heyne (Boston University)
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '6'
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_depth: 6
+    toc_float:
+      collapsed: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '6'
+  html_document:
+    toc: yes
+    toc_depth: '6'
+---
+
+This notebook provides some plots for the article: Heyne, M., Derrick, D., and Al-Tamimi, J. (under review). "Native language influence on brass instrument performance: An application of generalized additive mixed models (GAMMs) to midsagittal ultrasound images of the tongue". Frontiers Research Topic: Models and Theories of Speech Production. Ed. Adamantios Gafos & Pascal van Lieshout.
+
+
+# Loading packages & custom plotting functions
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+load_packages = c("readr","knitr","ggplot2","mgcv","itsadug","parallel","dplyr","rlist","plotly")
+# dplyr, rlist, and plotly are required by the custom plotting functions
+for(pkg in load_packages){
+  eval(bquote(library(.(pkg))))
+  if (paste0("package:", pkg) %in% search()){
+    cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+  }else{
+    install.packages(pkg)
+    eval(bquote(library(.(pkg))))
+    if (paste0("package:", pkg) %in% search()){
+      cat(paste0("Successfully loaded the ", pkg, " package.\n"))
+    }
+  }
+}
+rm(load_packages, pkg)
+
+# detect number of cores available for model calculations
+ncores = detectCores()
+cat(paste0("Number of cores available for model calculations set to ", ncores, "."))
+```
+
+
+## Functions
+
+### plotly_sig_diff_notes function (Matthias Heyne, 2019)
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# plot smooths with shading to indicate significant differences (Matthias Heyne, 2019)
+plotly_smooths_w_sig_diff <- function(model, condition, var1, var2, values, language, print=TRUE){
+  # specify path for saving plots
+  # plot_folder = "saved_plots"
+  # Sys.setenv(MAPBOX_TOKEN = 11122223333444)
+  # get intervals of significant differences by running plot_diff
+  # unfortunately setting plot=FALSE doesn't work as intervals of significant difference are not displayed!
+  # hardcoded condition
+  # output = capture.output(plot_diff(get(model), view=values, 
+  #                                   comp=list(tokenPooled.ord=c(var1, var2))))
+  # output = capture.output(plot_diff(get(model), view=values, comp=list(langNoteInt.ord=c(paste0("Tongan.", note, ".", intensity), paste0("NZE.", note, ".", intensity)))))
+  names_smooths=list()
+  if (condition=="tokenPooled.ord" && length(language)==1){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c(var1, var2))")))
+    names_smooths[1]=var1
+    names_smooths[2]=var2
+    plot_title = paste0("GAM smooths ", language, " ", var1, " vs ", var2)
+    # plot_filename = paste0(language, "_", var1, "_vs_", var2, "_from_", model)
+  }else if (condition=="langNoteInt.ord" && length(language)==2){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c('", language[1], ".", var1, ".", var2, 
+                                            "', '", language[2], ".", var1, ".", var2, "'))")))
+    names_smooths[1]=paste0(language[1], ".", var1, ".", var2)
+    names_smooths[2]=paste0(language[2], ".", var1, ".", var2)
+    plot_title = paste0("GAM smooths ", language[1], ".", var1, ".", var2, " vs ", language[2], ".", var1, ".", var2)
+    # plot_filename = paste0(language[1], ".", var1, ".", var2, "_vs_", language[2], ".", var1, ".", var2, "_from_", model)
+  }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+    output_comp = capture.output(cat(paste0("list(", condition, "=c('", language, ".", var1[1], ".", var2, 
+                                            "', '", language, ".", var1[2], ".", var2, "'))")))
+    names_smooths[1]=paste0(language, ".", var1[1], ".", var2)
+    names_smooths[2]=paste0(language, ".", var1[2], ".", var2)
+    plot_title = paste0("GAM smooths ", language, ".", var1[1], ".", var2, " vs ", language, ".", var1[2], ".", var2)
+    # plot_filename = paste0(language, ".", var1[1], ".", var2, "_vs_", language, ".", var1[2], ".", var2, "_from_", model)
+  }
+  # output_comp = capture.output(cat(paste0("list(", condition, "=c(var1, var2))")))
+  output = capture.output(plot_diff(get(model), view=values, comp=eval(parse(text=output_comp))))
+  # no significant difference
+  if ((length(language)==1 && length(var1)==1 && length(output)==7) | (length(language)==2 && length(output)==6) | 
+    (length(language)==1 && length(var1)==2 && length(output)==6)){
+    if (length(var1)==1){
+      cat(paste0("Smooths for ", var1, " & ", var2, " are not significantly different.\n"))
+      dat1 = NA
+      assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    }else{
+      cat(paste0("Smooths for ", var1[1], " & ", var1[2], " in ", language, " are not significantly different.\n"))
+      dat1 = NA
+      assign(paste0("int_sig_diff_", var1[1], "_", var1[2], "_", var2, "_", language), dat1, envir = .GlobalEnv)
+    }
+    rm(dat1, output)
+    # run plot_smooth to grab data for polar plots
+    if (condition=="tokenPooled.ord" && length(language)==1){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "=var1)")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "=var2)")))
+    }else if (condition=="langNoteInt.ord" && length(language)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language[1], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[2], ".", var1, ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language[2], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[1], ".", var1, ".", var2, "')")))
+    }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[1], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[2], ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[2], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[1], ".", var2, "')")))
+    }
+    p1 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p1)), rm.ranef=TRUE)
+    p2 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p2)), rm.ranef=TRUE)
+    # # old - hardcoded
+    # p1 = plot_smooth(x=get(model), view=values, cond=list(tokenPooled.ord=var1, tokenPooled.ord=var2))
+    # p2 = plot_smooth(x=get(model), view=values, cond=list(tokenPooled.ord=var2, tokenPooled.ord=var1))
+    # set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+    maximum=max(p1$fv$fit, p2$fv$fit)+((max(p1$fv$ul, p2$fv$ul)-max(p1$fv$fit, p2$fv$fit))/2)
+    # plot in polar coordinates
+    p=plot_ly(type='scatterpolar', mode='lines') %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash",  width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+      add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+      layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                        angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+             title=paste0("GAM smooths ", language, " ", var1, " vs ", var2), 
+             legend=list(orientation="h", xanchor="center", x=0.5))
+    Sys.sleep(0)
+    print(p)
+  # there are differences...
+  }else{
+    # grab intervals of significant differences from output
+    if (length(language)==1 && length(var1)==1 && length(output)>=8){
+    # if (length(language)==1 && length(output)>=8){
+      sig_diff1 = c(as.double(unlist(strsplit(unlist(strsplit(output[8], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[8], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=7) | (length(language)==1 && length(var1)==2 && length(output)>=7)){
+    # }else if (length(language)==2 && length(output)>=7){
+      sig_diff1 = c(as.double(unlist(strsplit(unlist(strsplit(output[7], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[7], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=9){
+    # if (length(language)==1 && length(output)>=9){
+      sig_diff2 = c(as.double(unlist(strsplit(unlist(strsplit(output[9], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[9], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=8) | (length(language)==1 && length(var1)==2 && length(output)>=8)){
+    # }else if (length(language)==2 && length(output)>=8){
+      sig_diff2 = c(as.double(unlist(strsplit(unlist(strsplit(output[8], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[8], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=10){
+    # if (length(language)==1 && length(output)>=10){
+      sig_diff3 = c(as.double(unlist(strsplit(unlist(strsplit(output[10], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[10], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=9) | (length(language)==1 && length(var1)==2 && length(output)>=9)){
+    # }else if (length(language)==2 && length(output)>=9){
+      sig_diff3 = c(as.double(unlist(strsplit(unlist(strsplit(output[9], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[9], " "))[3]))
+    }
+    if (length(language)==1 && length(var1)==1 && length(output)>=11){
+    # if (length(language)==1 && length(output)>=11){
+      sig_diff4 = c(as.double(unlist(strsplit(unlist(strsplit(output[11], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[11], " "))[3]))
+    }else if ((length(language)==2 && length(output)>=10) | (length(language)==1 && length(var1)==2 && length(output)>=10)){
+    # }else if (length(language)==2 && length(output)>=10){
+      sig_diff4 = c(as.double(unlist(strsplit(unlist(strsplit(output[10], " "))[1], "\t"))[2]), as.double(unlist(strsplit(output[10], " "))[3]))
+    }
+
+    
+    # write intervals of significant difference to variable
+    if ((length(language)==1 && length(var1)==1 && length(output)>=11) | ((length(language)==2 && length(output)>=10)) | 
+        (length(language)==1 && length(var1)==2 && length(output)>=10)){
+    # if ((length(language)==1 && length(output)>=11) | (length(language)==2 && length(output)>=10)){
+      dat1 = c(sig_diff1, sig_diff2, sig_diff3, sig_diff4)
+    }else if ((length(language)==1 && length(var1)==1 && length(output)>=10) | ((length(language)==2 && length(output)>=9)) | 
+              (length(language)==1 && length(var1)==2 && length(output)>=9)){
+    # }else if ((length(language)==1 && length(output)>=10) | (length(language)==2 && length(output)>=9)){
+      dat1 = c(sig_diff1, sig_diff2, sig_diff3)
+    }else if ((length(language)==1 && length(var1)==1 && length(output)>=9) | ((length(language)==2 && length(output)>=8)) | 
+              (length(language)==1 && length(var1)==2 && length(output)>=8)){
+    # }else if ((length(language)==1 && length(output)>=9) | (length(language)==2 && length(output)>=8)){
+      dat1 = c(sig_diff1, sig_diff2)
+    }else{
+      dat1 = sig_diff1
+    }
+    # old
+    # assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    if (length(var1)==1){
+      assign(paste0("int_sig_diff_", var1, "_", var2), dat1, envir = .GlobalEnv)
+    }else{
+      assign(paste0("int_sig_diff_", var1[1], "_", var1[2], "_", var2, "_", language), dat1, envir = .GlobalEnv)
+    }
+    rm(dat1, output)
+    # run plot_smooth to grab data for polar plots
+    if (condition=="tokenPooled.ord" && length(language)==1){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "=var1)")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "=var2)")))
+    }else if (condition=="langNoteInt.ord" && length(language)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language[1], ".", var1, ".", var2, 
+                                "', ", condition, "='", language[2], ".", var1, ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language[2], ".", var1, ".", var2, 
+                                          "', ", condition, "='", language[1], ".", var1, ".", var2, "')")))
+    }else if (condition=="langNoteInt.ord" && length(language)==1 && length(var1)==2){
+      cond_p1 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[1], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[2], ".", var2, "')")))
+      cond_p2 = capture.output(cat(paste0("list(", condition, "='", language, ".", var1[2], ".", var2, 
+                                          "', ", condition, "='", language, ".", var1[1], ".", var2, "')")))
+    }
+    p1 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p1)), rm.ranef=TRUE)
+    p2 = plot_smooth(x=get(model), view=values, cond=eval(parse(text=cond_p2)), rm.ranef=TRUE)
+    # set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+    maximum=max(p1$fv$fit, p2$fv$fit)+((max(p1$fv$ul, p2$fv$ul)-max(p1$fv$fit, p2$fv$fit))/2)
+    # plot in polar coordinates
+    if (exists("sig_diff4")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff3[1]*180/pi, sig_diff3[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff4[1]*180/pi, sig_diff4[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else if (exists("sig_diff3")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff3[1]*180/pi, sig_diff3[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else if (exists("sig_diff2")){
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff2[1]*180/pi, sig_diff2[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }else{
+      p=plot_ly(type='scatterpolar', mode='lines') %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color="blue", dash="dash", width=2.5), name=names_smooths[1]) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color="blue", dash="dash", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color="red", width=2.5), name=names_smooths[2]) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>% 
+        add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color="red", dash="dot", width=0.5), showlegend=FALSE) %>%
+        add_trace(theta=seq(sig_diff1[1]*180/pi, sig_diff1[2]*180/pi, length.out=20), 
+                  r=c(0, rep(maximum, 18), 0), line=list(color="black", width=0.5), fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+        layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                          angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+               title=plot_title, legend=list(orientation="h", xanchor="center", x=0.5))
+      Sys.sleep(0)
+      print(p)
+    }
+  }
+  # orca should work with plotly 4.9.0 after loading the orca module before stating R and RStudio
+  # orca(p, "test.pdf")
+}
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# load final model for H1
+Notes.gam.AR.Mod2 = readRDS("updated_models/Notes.gam.AR.Mod2.rds")
+```
+
+# Plot final model outputs (compare notes across the two languages)
+
+## Note "Bb2"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb2", 
+                          var2="forte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb2", 
+                          var2="mezzoforte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb2", 
+                          var2="mezzopiano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb2", 
+                          var2="piano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+
+## Note "F3"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F3", 
+                          var2="forte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F3", 
+                          var2="mezzoforte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F3", 
+                          var2="mezzopiano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F3", 
+                          var2="piano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+
+## Note "Bb3"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb3", 
+                          var2="forte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb3", 
+                          var2="mezzoforte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb3", 
+                          var2="mezzopiano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="Bb3", 
+                          var2="piano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+
+## Note "D4"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="D4", 
+                          var2="forte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="D4", 
+                          var2="mezzoforte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="D4", 
+                          var2="mezzopiano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="D4", 
+                          var2="piano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+
+## Note "F4"
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F4", 
+                          var2="forte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F4", 
+                          var2="mezzoforte", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F4", 
+#                        var2="mezzopiano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1="F4", 
+                          var2="piano", values="theta_uncut_z", language=c("NZE","Tongan"))
+```
+
+## write intervals of significant differences to .csv file
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# combine int_sig_diff... from workspace
+all_sig_diff_intervals = (list=ls(pattern="^int_sig_diff"))
+
+max_sig_diff_intervals = 0
+for (i in 1:length(all_sig_diff_intervals)){
+  if (length(get(all_sig_diff_intervals[i]))>max_sig_diff_intervals){
+    max_sig_diff_intervals = length(get(all_sig_diff_intervals[i]))
+  }
+}
+
+# set up data.frame to store information
+sig_diffs = array(NA, c(length(all_sig_diff_intervals), max_sig_diff_intervals))
+sig_diffs = data.frame(sig_diffs)
+if (max_sig_diff_intervals==8){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2",
+                          "low_int3","high_int3","low_int4","high_int4")
+}else if (max_sig_diff_intervals==6){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2","low_int3","high_int3")
+}else if (max_sig_diff_intervals==4){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2")
+}else{
+  colnames(sig_diffs) = c("low_int1","high_int1")
+}
+# create empty list for row names
+names = rep(list("NA"), length(all_sig_diff_intervals))
+
+# loop through variable and write information to data.frame
+for (i in 1:length(all_sig_diff_intervals)){
+  names[i] = paste0(unlist(strsplit(all_sig_diff_intervals[i], "_"))[4], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[5])
+  sig_diffs[i, 1] = get(all_sig_diff_intervals[i])[1]
+  sig_diffs[i, 2] = get(all_sig_diff_intervals[i])[2]
+  if (length(get(all_sig_diff_intervals[i]))==4){
+    sig_diffs[i, 3] = get(all_sig_diff_intervals[i])[3]
+    sig_diffs[i, 4] = get(all_sig_diff_intervals[i])[4]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==6){
+    sig_diffs[i, 5] = get(all_sig_diff_intervals[i])[5]
+    sig_diffs[i, 6] = get(all_sig_diff_intervals[i])[6]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==8){
+    sig_diffs[i, 7] = get(all_sig_diff_intervals[i])[7]
+    sig_diffs[i, 8] = get(all_sig_diff_intervals[i])[8]
+  }
+}
+row.names(sig_diffs) = names
+rm(i)
+
+# inspect sig_diffs data.frame and move entries for conditions with only 
+# one significantly different interval to other edge, if applicable
+sig_diffs["Bb2_piano",3] = sig_diffs["Bb2_piano",1]
+sig_diffs["Bb2_piano",4] = sig_diffs["Bb2_piano",2]
+sig_diffs["Bb2_piano",1:2] = NA
+sig_diffs["D4_mezzopiano",3] = sig_diffs["D4_mezzopiano",1]
+sig_diffs["D4_mezzopiano",4] = sig_diffs["D4_mezzopiano",2]
+sig_diffs["D4_mezzopiano",1:2] = NA
+rm(list=ls(pattern="^int_sig_diff"))
+rm(list)
+
+# determine intervals where all smooths are different
+# to disregard NAs, use na.rm=TRUE
+sig_diffs[length(all_sig_diff_intervals)+1,1] = max(sig_diffs[,1])
+sig_diffs[length(all_sig_diff_intervals)+1,2] = min(sig_diffs[,2])
+sig_diffs[length(all_sig_diff_intervals)+1,3] = max(sig_diffs[,3])
+sig_diffs[length(all_sig_diff_intervals)+1,4] = min(sig_diffs[,4])
+# -> There are no intervals where all smooths are different!!!
+
+# determine intervals were 17 out of 19 smooths (84.2%) have significant differences
+sig_diffs[length(all_sig_diff_intervals)+2,1] = max(sort(sig_diffs[1:length(all_sig_diff_intervals),1], na.last=TRUE)[1:17])
+sig_diffs[length(all_sig_diff_intervals)+2,2] = min(sort(sig_diffs[1:length(all_sig_diff_intervals),2], decreasing=TRUE, na.last=TRUE)[1:17])
+sig_diffs[length(all_sig_diff_intervals)+2,3] = max(sort(sig_diffs[1:length(all_sig_diff_intervals),3], na.last=TRUE)[1:17])
+sig_diffs[length(all_sig_diff_intervals)+2,4] = min(sort(sig_diffs[1:length(all_sig_diff_intervals),4], decreasing=TRUE, na.last=TRUE)[1:17])
+
+# determine intervals were 16 out of 19 smooths (84.2%) have significant differences
+sig_diffs[length(all_sig_diff_intervals)+3,1] = max(sort(sig_diffs[1:length(all_sig_diff_intervals),1], na.last=TRUE)[1:16])
+sig_diffs[length(all_sig_diff_intervals)+3,2] = min(sort(sig_diffs[1:length(all_sig_diff_intervals),2], decreasing=TRUE, na.last=TRUE)[1:16])
+sig_diffs[length(all_sig_diff_intervals)+3,3] = max(sort(sig_diffs[1:length(all_sig_diff_intervals),3], na.last=TRUE)[1:16])
+sig_diffs[length(all_sig_diff_intervals)+3,4] = min(sort(sig_diffs[1:length(all_sig_diff_intervals),4], decreasing=TRUE, na.last=TRUE)[1:16])
+
+# update row names
+row.names(sig_diffs) = c(names, "overall","17_out_of_19","16_out_of_19")
+rm(max_sig_diff_intervals, all_sig_diff_intervals, names)
+
+# write variable to .csv file
+write.csv(sig_diffs, file = "Notes.gam.AR.Mod2_intervals_of_significant_differences.csv")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# visualize areas of overall difference
+p1=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=seq(sig_diffs["17_out_of_19",1]*180/pi, sig_diffs["17_out_of_19",2]*180/pi, 
+                      length.out=20), r=c(0, rep(320, 18), 0), line=list(color="black", width=0.5), 
+            fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+  add_trace(theta=seq(sig_diffs["17_out_of_19",3]*180/pi, sig_diffs["17_out_of_19",4]*180/pi, 
+                      length.out=20), r=c(0, rep(320, 18), 0), line=list(color="black", width=0.5), 
+            fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>% 
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,320)),
+                        angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("Intervals of significant differences for 17 out of 19 comparisons"), 
+         legend=list(orientation="h", xanchor="center", x=0.5))
+Sys.sleep(0)
+print(p1)
+
+p2=plot_ly(type='scatterpolar', mode='lines') %>%
+  add_trace(theta=seq(sig_diffs["16_out_of_19",1]*180/pi, sig_diffs["16_out_of_19",2]*180/pi, 
+                      length.out=20), r=c(0, rep(320, 18), 0), line=list(color="black", width=0.5), 
+            fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>%
+  add_trace(theta=seq(sig_diffs["16_out_of_19",3]*180/pi, sig_diffs["16_out_of_19",4]*180/pi, 
+                      length.out=20), r=c(0, rep(320, 18), 0), line=list(color="black", width=0.5), 
+            fill="toself", fillcolor=rgb(0,0,0,max=255,alpha=25), showlegend=FALSE) %>% 
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,320)),
+                        angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("Intervals of significant differences for 16 out of 19 comparisons"), 
+         legend=list(orientation="h", xanchor="center", x=0.5))
+Sys.sleep(0)
+print(p2)
+
+# rm(sig_diffs, p1, p2)
+```
+
+
+# Plot final model outputs (compare notes within languages -> H3)
+
+## NZE
+
+### at forte intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="forte", values="theta_uncut_z", language="NZE")
+```
+
+### at mezzoforte intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="NZE")
+```
+
+### at mezzopiano intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          # var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          # var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+  #                         var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          # var2="mezzopiano", values="theta_uncut_z", language="NZE")
+```
+
+### at piano intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="piano", values="theta_uncut_z", language="NZE")
+```
+
+### write intervals of significant differences to .csv file
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# combine int_sig_diff... from workspace
+all_sig_diff_intervals = (list=ls(pattern="^int_sig_diff"))
+
+max_sig_diff_intervals = 0
+for (i in 1:length(all_sig_diff_intervals)){
+  if (length(get(all_sig_diff_intervals[i]))>max_sig_diff_intervals){
+    max_sig_diff_intervals = length(get(all_sig_diff_intervals[i]))
+  }
+}
+
+# set up data.frame to store information
+sig_diffs = array(NA, c(length(all_sig_diff_intervals), max_sig_diff_intervals))
+sig_diffs = data.frame(sig_diffs)
+if (max_sig_diff_intervals==8){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2",
+                          "low_int3","high_int3","low_int4","high_int4")
+}else if (max_sig_diff_intervals==6){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2","low_int3","high_int3")
+}else if (max_sig_diff_intervals==4){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2")
+}else{
+  colnames(sig_diffs) = c("low_int1","high_int1")
+}
+# create empty list for row names
+names = rep(list("NA"), length(all_sig_diff_intervals))
+
+# loop through variable and write information to data.frame
+for (i in 1:length(all_sig_diff_intervals)){
+  names[i] = paste0(unlist(strsplit(all_sig_diff_intervals[i], "_"))[4], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[5], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[6], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[7]
+                    )
+  sig_diffs[i, 1] = get(all_sig_diff_intervals[i])[1]
+  sig_diffs[i, 2] = get(all_sig_diff_intervals[i])[2]
+  if (length(get(all_sig_diff_intervals[i]))==4){
+    sig_diffs[i, 3] = get(all_sig_diff_intervals[i])[3]
+    sig_diffs[i, 4] = get(all_sig_diff_intervals[i])[4]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==6){
+    sig_diffs[i, 5] = get(all_sig_diff_intervals[i])[5]
+    sig_diffs[i, 6] = get(all_sig_diff_intervals[i])[6]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==8){
+    sig_diffs[i, 7] = get(all_sig_diff_intervals[i])[7]
+    sig_diffs[i, 8] = get(all_sig_diff_intervals[i])[8]
+  }
+}
+row.names(sig_diffs) = names
+rm(i, list=ls(pattern="^int_sig_diff"))
+rm(list)
+rm(max_sig_diff_intervals, all_sig_diff_intervals, names)
+
+# write variable to .csv file
+write.csv(sig_diffs, file = "Notes.gam.AR.Mod2_within_lg_ints_of_sig_diffs_NZE.csv")
+rm(sig_diffs)
+```
+
+
+## Tongan
+
+### at forte intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="forte", values="theta_uncut_z", language="Tongan")
+```
+
+### at mezzoforte intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="mezzoforte", values="theta_uncut_z", language="Tongan")
+```
+
+### at mezzopiano intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="mezzopiano", values="theta_uncut_z", language="Tongan")
+```
+
+### at piano intensity
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F3"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","Bb3"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","D4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb2","F4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","Bb3"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","D4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("F3","F4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","D4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("Bb3","F4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+plotly_smooths_w_sig_diff(model="Notes.gam.AR.Mod2", condition="langNoteInt.ord", var1=c("D4","F4"),
+                          var2="piano", values="theta_uncut_z", language="Tongan")
+```
+
+### write intervals of significant differences to .csv file
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+# combine int_sig_diff... from workspace
+all_sig_diff_intervals = (list=ls(pattern="^int_sig_diff"))
+
+max_sig_diff_intervals = 0
+for (i in 1:length(all_sig_diff_intervals)){
+  if (length(get(all_sig_diff_intervals[i]))>max_sig_diff_intervals){
+    max_sig_diff_intervals = length(get(all_sig_diff_intervals[i]))
+  }
+}
+
+# set up data.frame to store information
+sig_diffs = array(NA, c(length(all_sig_diff_intervals), max_sig_diff_intervals))
+sig_diffs = data.frame(sig_diffs)
+if (max_sig_diff_intervals==8){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2",
+                          "low_int3","high_int3","low_int4","high_int4")
+}else if (max_sig_diff_intervals==6){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2","low_int3","high_int3")
+}else if (max_sig_diff_intervals==4){
+  colnames(sig_diffs) = c("low_int1","high_int1","low_int2","high_int2")
+}else{
+  colnames(sig_diffs) = c("low_int1","high_int1")
+}
+# create empty list for row names
+names = rep(list("NA"), length(all_sig_diff_intervals))
+
+# loop through variable and write information to data.frame
+for (i in 1:length(all_sig_diff_intervals)){
+  names[i] = paste0(unlist(strsplit(all_sig_diff_intervals[i], "_"))[4], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[5], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[6], "_",
+                    unlist(strsplit(all_sig_diff_intervals[i], "_"))[7]
+                    )
+  sig_diffs[i, 1] = get(all_sig_diff_intervals[i])[1]
+  sig_diffs[i, 2] = get(all_sig_diff_intervals[i])[2]
+  if (length(get(all_sig_diff_intervals[i]))==4){
+    sig_diffs[i, 3] = get(all_sig_diff_intervals[i])[3]
+    sig_diffs[i, 4] = get(all_sig_diff_intervals[i])[4]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==6){
+    sig_diffs[i, 5] = get(all_sig_diff_intervals[i])[5]
+    sig_diffs[i, 6] = get(all_sig_diff_intervals[i])[6]
+  }
+  if (length(get(all_sig_diff_intervals[i]))==8){
+    sig_diffs[i, 7] = get(all_sig_diff_intervals[i])[7]
+    sig_diffs[i, 8] = get(all_sig_diff_intervals[i])[8]
+  }
+}
+row.names(sig_diffs) = names
+rm(i, list=ls(pattern="^int_sig_diff"))
+rm(list, max_sig_diff_intervals, all_sig_diff_intervals, names)
+
+# write variable to .csv file
+write.csv(sig_diffs, file = "Notes.gam.AR.Mod2_within_lg_ints_of_sig_diffs_Tongan.csv")
+rm(sig_diffs)
+```
+
+# Plot all notes together
+
+## NZE
+
+### forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# use colors from PhD
+RED0 = (rgb(213,13,11, 255, maxColorValue=255))
+# BROWN0 = (rgb(123,73,55,255, maxColorValue=255))
+PURPLE0 = (rgb(143,72,183,255, maxColorValue=255))
+# GRAY0 = (rgb(108,108,108,255, maxColorValue=255))
+# GREEN0 = (rgb(0,151,55,255, maxColorValue=255))
+ORANGE0 = (rgb(255,123,0,255, maxColorValue=255))
+# PINK0 = (rgb(224,130,180,255, maxColorValue=255))
+# TEAL0 = (rgb(0,175,195,255, maxColorValue=255))
+GOLD0 = (rgb(172,181,0,255, maxColorValue=255))
+# light_blue=rgb(0,117,220,255,maxColorValue=255) #col2
+# pink=rgb(194,0,136,255,maxColorValue=255) #col13
+dark_blue=rgb(0,51,128,255,maxColorValue=255) #col14
+# dark_red=rgb(153,0,0,255,maxColorValue=255)
+
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb2.forte"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F3.forte"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb3.forte"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.D4.forte"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F4.forte"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All notes produced by NZE players at forte intensity")
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+### mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb2.mezzoforte"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F3.mezzoforte"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb3.mezzoforte"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.D4.mezzoforte"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F4.mezzoforte"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All notes produced by NZE players at mezzoforte intensity")
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+### mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb2.mezzopiano"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F3.mezzopiano"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb3.mezzopiano"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.D4.mezzopiano"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All notes produced by NZE players at mezzopiano intensity")
+p
+rm(p1,p2,p3,p4)
+```
+
+### piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb2.piano"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F3.piano"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.Bb3.piano"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.D4.piano"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="NZE.F4.piano"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title="All notes produced by NZE players at piano intensity")
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+
+## Tongan
+
+### forte
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb2.forte"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F3.forte"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb3.forte"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.D4.forte"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F4.forte"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("All notes produced by Tongan players at forte intensity"))
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+### mezzoforte
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+# select colors from RColorBrewer
+# display.brewer.pal(11,"RdYlBu")
+
+# define colors -> colorblind_safe
+# colors = brewer.pal(11,"RdYlBu")[c(1,2,4,9,11)]
+
+# use colors from PhD
+RED0 = (rgb(213,13,11, 255, maxColorValue=255))
+# BROWN0 = (rgb(123,73,55,255, maxColorValue=255))
+PURPLE0 = (rgb(143,72,183,255, maxColorValue=255))
+# GRAY0 = (rgb(108,108,108,255, maxColorValue=255))
+# GREEN0 = (rgb(0,151,55,255, maxColorValue=255))
+ORANGE0 = (rgb(255,123,0,255, maxColorValue=255))
+# PINK0 = (rgb(224,130,180,255, maxColorValue=255))
+# TEAL0 = (rgb(0,175,195,255, maxColorValue=255))
+GOLD0 = (rgb(172,181,0,255, maxColorValue=255))
+# light_blue=rgb(0,117,220,255,maxColorValue=255) #col2
+# pink=rgb(194,0,136,255,maxColorValue=255) #col13
+dark_blue=rgb(0,51,128,255,maxColorValue=255) #col14
+# dark_red=rgb(153,0,0,255,maxColorValue=255)
+
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb2.mezzoforte"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F3.mezzoforte"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb3.mezzoforte"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.D4.mezzoforte"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F4.mezzoforte"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("All notes produced by Tongan players at mezzoforte intensity"))
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+### mezzopiano
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb2.mezzopiano"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F3.mezzopiano"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb3.mezzopiano"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.D4.mezzopiano"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F4.mezzopiano"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("All notes produced by Tongan players at mezzopiano intensity"))
+p
+rm(p1,p2,p3,p4,p5)
+```
+
+### piano
+
+```{r warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+colors=c(RED0,PURPLE0,ORANGE0,GOLD0,dark_blue)
+
+# run plot_smooth to grab values for fit, upper & lower bounds
+p1=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb2.piano"), rm.ranef=TRUE)
+p2=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F3.piano"), rm.ranef=TRUE)
+p3=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.Bb3.piano"), rm.ranef=TRUE)
+p4=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.D4.piano"), rm.ranef=TRUE)
+p5=plot_smooth(x=Notes.gam.AR.Mod2, view="theta_uncut_z", 
+               cond=list(langNoteInt.ord="Tongan.F4.piano"), rm.ranef=TRUE)
+smooth_names=c("Bb2","F3","Bb3","D4","F4")
+
+# set Rho max to the max of the fit + half the difference between max of the fit and the upper limit
+max_ul = max(p1$fv$ul, p2$fv$ul, p3$fv$ul, p4$fv$ul, p5$fv$ul)
+max_fit = max(p1$fv$fit, p2$fv$fit, p3$fv$fit, p4$fv$fit, p5$fv$fit)
+maximum=max_fit+((max_ul-max_fit)/2)
+
+# plot in polar coordinates
+p=plot_ly(type='scatterpolar', mode='lines') %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$fit, line=list(color=colors[1], width=2.5), name=smooth_names[1]) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ul, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p1$fv$theta_uncut_z*180/pi, r=p1$fv$ll, line=list(color=colors[1], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$fit, line=list(color=colors[2], width=2.5),name=smooth_names[2]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ul, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p2$fv$ll, line=list(color=colors[2], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$fit, line=list(color=colors[3], width=2.5), name=smooth_names[3]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ul, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p3$fv$ll, line=list(color=colors[3], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$fit, line=list(color=colors[4], width=2.5), name=smooth_names[4]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ul, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p4$fv$ll, line=list(color=colors[4], dash="dot", width=0.5), showlegend=FALSE) %>%
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$fit, line=list(color=colors[5], width=2.5), name=smooth_names[5]) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ul, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>% 
+  add_trace(theta=p2$fv$theta_uncut_z*180/pi, r=p5$fv$ll, line=list(color=colors[5], dash="dot", width=0.5), showlegend=FALSE) %>%
+  layout(polar=list(sector=c(20,160), radialaxis=list(angle=90, range=c(0,maximum)),
+                    angularaxis=list(thetaunit='radians', direction="clockwise", rotation=0)), 
+         title=paste0("All notes produced by Tongan players at piano intensity"))
+p
+rm(p1,p2,p3,p4,p5)
+```
+
