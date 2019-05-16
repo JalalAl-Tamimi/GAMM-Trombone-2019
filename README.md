@@ -4,6 +4,10 @@ This repo contains two notebooks that provide the full analysis of the article: 
 
 The following are the notebooks and csv files associated with the submission:
 
+## Dataframe
+
+The data frame can be [accessed from here](https://osf.io/um23r/?pid=3zn2g)
+
 ## Full plots
 
 [Full plots presented in the paper](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/Frontiers_paper_plots_Final.nb.html)
