@@ -15,7 +15,7 @@ The data frame can be [accessed from here](https://osf.io/um23r/?pid=3zn2g)
 ## Hypothesis 1: Language influence on tongue position when producing notes
 
 1. [Hypothesis 1, Prediction 1: Model specification and summaries](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/GAMM_Trombone_H1_Final.nb.html)
-2. [Hypothesis 1, Prediction 1: Plots](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/GAMM_Trombone_H1_plots_v8.nb.html)
+2. [Hypothesis 1, Prediction 1: Plots](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/GAMM_Trombone_H1_plots_v6.nb.html)
 3. [Hypothesis 1, Prediction 2: Model specification, summary and plots](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/GAMM_Trombone_H1b_v8.html)
 4. [Hypothesis 1: Parametric plots and inspection of random effects](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/GAMM_Trombone_H1_para_rand.nb.html)
 5. [Hypothesis 1: Intervals of significant differences (csv)](https://jalalal-tamimi.github.io/GAMM-Trombone-2019/Notes.gam.AR.Mod2_intervals_of_significant_differences.csv)
